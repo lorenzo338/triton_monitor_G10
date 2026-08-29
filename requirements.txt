@@ -1,0 +1,14 @@
+# =============================================================================
+# Proyecto Tritón - Aislamiento de dependencias
+# =============================================================================
+# Cliente HTTP asíncrono de alto rendimiento. Es la única dependencia externa
+# del sistema: todo lo demás (asyncio, logging, queue, gzip, argparse, re)
+# forma parte de la biblioteca estándar de Python.
+#
+# Instalación recomendada dentro de un entorno virtual aislado:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+# =============================================================================
+
+httpx>=0.27.0

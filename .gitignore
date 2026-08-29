@@ -1,0 +1,45 @@
+# =============================================================================
+# Proyecto Tritón - Exclusiones de control de versiones
+# =============================================================================
+
+# Entornos virtuales aislados
+.venv/
+venv/
+env/
+ENV/
+
+# Artefactos de compilación de CPython
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Telemetría generada en tiempo de ejecución.
+# Los logs son evidencia operativa, no código fuente: nunca se versionan.
+*.log
+*.log.*
+*.gz
+
+# Secretos y configuración local. Prohibido subir credenciales al repositorio.
+.env
+.env.*
+!.env.example
+
+# Herramientas de desarrollo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Sistemas operativos
+.DS_Store
+Thumbs.db
