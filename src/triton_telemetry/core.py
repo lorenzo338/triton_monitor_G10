@@ -1,6 +1,6 @@
 """Lógica concurrente asíncrona de red del Proyecto Tritón.
 
-Responsable: **Integrante 2 - Ingeniero de Concurrencia y Telemetría Asíncrona**.
+Responsable: **Integrante 2 Hernan - Ingeniero de Concurrencia y Telemetría Asíncrona**.
 
 Este módulo interroga en paralelo los nodos de telemetría de AWS, Azure y GCP
 mediante peticiones HTTP **reales** contra servicios públicos de internet. No
