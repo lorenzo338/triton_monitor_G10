@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Verificado en Windows 11 con Python 3.14.7 — 22/22 verificaciones OK (Lorenzo).
 """Batería de verificación del módulo del Integrante 4 (Lorenzo).
 
 Audita el **pipeline de almacenamiento y desacoplamiento no bloqueante**:
