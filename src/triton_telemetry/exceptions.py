@@ -1,6 +1,13 @@
 """Excepciones semánticas de dominio del Proyecto Tritón.
 
-Responsable: **Integrante 1 - Ingeniero de Robustez de Entradas y Excepciones**.
+Responsable: Gabriel — Ingeniero de Robustez de Entradas y Excepciones.
+
+Contribución de Gabriel:
+    Este módulo centraliza la jerarquía de errores de dominio y la traducción
+    de fallos técnicos a excepciones semánticas reutilizables por la capa de
+    orquestación. La intención es que la lógica de negocio sepa distinguir entre
+    timeouts de proveedor, payload corrupto y pérdidas de peering sin depender
+    de detalles genuinos de la infraestructura de red.
 
 Este módulo define el mapeo semántico de errores del sistema de telemetría.
 Su objetivo es traducir fallos técnicos de bajo nivel (excepciones nativas de
@@ -18,6 +25,9 @@ operador sin capacidad de abortar un proceso desatendido colgado.
 """
 
 from __future__ import annotations
+
+__author__ = "Gabriel"
+__responsable__ = "Gabriel - Ingeniero de Robustez de Entradas y Excepciones"
 
 __all__ = [
     "TritonError",

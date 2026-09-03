@@ -1,6 +1,13 @@
 """Validación declarativa estricta en la frontera de la CLI.
 
-Responsable: **Integrante 1 - Ingeniero de Robustez de Entradas y Excepciones**.
+Responsable: Gabriel — Ingeniero de Robustez de Entradas y Excepciones.
+
+Contribución de Gabriel:
+    La validación declarativa de esta capa protege al sistema antes de que un
+    valor malformado alcance el bucle de eventos, la red o la persistencia. Las
+    funciones de este módulo filtran entradas incorrectas, métricas fuera de
+    rango y nombres de clúster inválidos, reduciendo la superficie de fallo del
+    monitor en escenarios de tormenta o corrupción de datos.
 
 Este módulo intercepta datos corruptos o fuera del rango de dominio *antes* de
 que lleguen a tocar el bucle de eventos de ``asyncio`` o los hilos de red. La
@@ -17,6 +24,9 @@ from __future__ import annotations
 
 import argparse
 import re
+
+__author__ = "Gabriel"
+__responsable__ = "Gabriel - Ingeniero de Robustez de Entradas y Excepciones"
 
 __all__ = [
     "TIMEOUT_MINIMO",
