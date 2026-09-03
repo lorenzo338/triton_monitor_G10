@@ -28,14 +28,6 @@ rotado y comprimido.
 > Cada integrante defiende **exclusivamente** el módulo bajo su firma durante el
 > video de defensa grupal.
 
----|---|---|---|---|
-| 1 | `_A COMPLETAR_` | | Ingeniero de Robustez de Entradas y Excepciones | `exceptions.py`, `sanitizer.py` |
-| 2 | `_A COMPLETAR_` | | Ingeniero de Concurrencia y Telemetría Asíncrona | `core.py` |
-| 3 | `_A COMPLETAR_` | | Ingeniero de Formateo Estructurado JSON | `logging_engine.py` — `AsyncJSONFormatter` |
-| 4 | `_A COMPLETAR_` | | Ingeniero de Almacenamiento y Desacoplamiento No Bloqueante | `logging_engine.py` — pipeline de cola |
-| 5 | `_A COMPLETAR_` | | Coordinador de Integración y Flujo CLI | `app_operator.py` |
-| 6 | `_A COMPLETAR_` | | Ingeniero de Simulación de Caos y Pruebas Forenses | `tests/` |
-
 ---
 
 ## 2. Escenario de producción
@@ -54,7 +46,12 @@ cerrarse de forma abrupta y sin perder la evidencia forense de ningún incidente
 ## 3. Instalación
 
 Requiere **Python 3.12 o superior** (se usan `asyncio.TaskGroup`, `except*` de
-PEP 654 y el atributo nativo `taskName` en los registros de logging).
+PEP 654 y el atributo nativo `taskName` en los registros de logging). Verificado
+sobre CPython 3.12 y 3.14.
+
+> En distribuciones Debian/Ubuntu, `python3 -m venv` falla si el paquete del
+> módulo `venv` no está instalado. Se resuelve con
+> `sudo apt install python3-venv` (o `python3.12-venv` según la versión).
 
 ```bash
 # 1. Clonar el repositorio
@@ -70,6 +67,7 @@ pip install -r requirements.txt
 
 # 4. Verificar la instalación
 python3 src/app_operator.py --help
+python3 src/app_operator.py --version
 ```
 
 ---
@@ -82,13 +80,18 @@ python3 src/app_operator.py PROVEEDOR [PROVEEDOR ...] [opciones]
 
 | Parámetro | Descripción | Restricción |
 |---|---|---|
-| `proveedores` | Nubes a interrogar | `AWS`, `Azure`, `GCP` |
+| `proveedores` | Nubes a interrogar | `AWS`, `Azure`, `GCP`; los repetidos se colapsan |
 | `-c`, `--cluster` | Identificador de clúster | Patrón `cluster-<region>-<numero>` |
 | `-t`, `--timeout` | Ventana de espera de red | Flotante en `[0.1, 5.0]` segundos |
 | `-m`, `--modo` | Modo operativo | `nominal`, `debug`, `emergency` |
 | `--chaos` | Inyección de caos real en caliente | — |
 | `--archivo-log` | Ruta del volcado estructurado | Por defecto `triton_services.log` |
 | `-v` / `-q` | Verbosidad de consola | Mutuamente excluyentes |
+| `--version` | Versión del paquete `triton_telemetry` | Imprime y termina con código `0` |
+
+`-q` suprime **toda** la salida de texto, tanto el reporte de `stdout` como las
+notas forenses de `stderr`. El volcado JSON en disco no se ve afectado: viaja
+por el pipeline de logging, que es un canal independiente.
 
 ---
 
@@ -157,6 +160,12 @@ triton_monitor/
 │   │   └── logging_engine.py    # Formateador JSON y pipeline no bloqueante
 │   └── app_operator.py          # Punto de entrada CLI (argparse + except*)
 ├── tests/
+│   ├── _comun.py                # Utilidades compartidas por las baterías
+│   ├── test_integrante_1.py     # Verificación de exceptions.py y sanitizer.py
+│   ├── test_integrante_2.py     # Verificación de core.py
+│   ├── test_integrante_3.py     # Verificación de AsyncJSONFormatter
+│   ├── test_integrante_4.py     # Verificación del pipeline de cola
+│   ├── test_integrante_5.py     # Verificación del CLI y auditoría AST
 │   ├── chaos_suite.py           # Suite de simulación de caos
 │   └── telemetry_validator.py   # Auditoría forense del JSON y los .gz
 ├── requirements.txt             # Dependencias aisladas del proyecto
@@ -196,6 +205,34 @@ destruiría el árbol de `ExceptionGroup` que el `AsyncJSONFormatter` necesita
 expandir en el hilo consumidor. La subclase trabaja sobre una copia superficial
 del registro y conserva la evidencia intacta.
 
+### 7.4. Por qué la deduplicación de proveedores vive en la CLI y no en el núcleo
+
+`core.escanear_proveedores` bautiza cada corrutina como `telemetria-<proveedor>`.
+Una invocación como `AWS AWS AWS` crearía tres tareas homónimas: se triplicarían
+las peticiones HTTP reales contra el mismo endpoint y el campo `tarea_asyncio`
+del volcado JSON dejaría de identificar unívocamente a la corrutina emisora,
+que es precisamente la garantía forense que ofrece la sección 10.
+
+La corrección pertenece a la frontera de entrada, no al núcleo: es una
+normalización del dato del operador, del mismo orden que el patrón de clúster o
+el rango de timeout. Se implementa como una subclase de `argparse.Action`, de
+modo que el núcleo asíncrono sigue recibiendo una lista ya saneada y no necesita
+defenderse de entradas malformadas.
+
+### 7.5. Por qué existe un cuarto bloque `except*`
+
+Los tres bloques quirúrgicos cubren las familias de incidente conocidas. Si la
+jerarquía `TritonError` incorporara una excepción nueva sin tratamiento propio,
+su subgrupo saldría vivo del `try` y se relanzaría **después** del `finally`: el
+operador recibiría un traceback crudo y el proceso terminaría con el código que
+elija el intérprete, descartando el `codigo_salida` semántico que acumula
+`main()`.
+
+El bloque `except* TritonError` final captura la raíz de la jerarquía y actúa
+como red de seguridad. Va **último** de forma deliberada: declarado antes,
+absorbería los subgrupos de las tres familias específicas y ninguno de sus
+bloques llegaría a ejecutarse.
+
 ---
 
 ## 8. Cumplimiento de estándares (HARD GATES)
@@ -208,7 +245,7 @@ del registro y conserva la evidencia intacta.
 | Aislamiento de dependencias | `requirements.txt` con `httpx` |
 | Documentación con diagrama Mermaid | Secciones 5 y 5.1 |
 | Marca de tiempo ISO 8601 UTC | `datetime.fromtimestamp(..., tz=timezone.utc)` |
-| PEP 654 (`except*`) | Tres bloques quirúrgicos independientes en `app_operator.py` |
+| PEP 654 (`except*`) | Tres bloques quirúrgicos independientes en `app_operator.py`, más una red de seguridad `except* TritonError` (sección 7.5) |
 | PEP 765 (Python 3.14) | El `finally` no inyecta directivas de control de flujo |
 
 ---
@@ -244,6 +281,34 @@ El `TaskGroup` detecta los colapsos paralelos simultáneos y propaga un
 `ExceptionGroup` procesado selectivamente por los bloques `except*`. Las notas
 inyectadas con `add_note()` se despliegan en la consola de error y se guarda un
 volcado estructurado del desastre en `triton_services.log`.
+
+### Escenario D — Silenciamiento total de la consola
+
+```bash
+python3 src/app_operator.py AWS Azure GCP -c cluster-us-west-02 --chaos -q
+```
+
+No se imprime una sola línea por `stdout` ni por `stderr`, pero el volcado
+`triton_services.log` se escribe íntegro: consola y disco son canales
+independientes del mismo pipeline.
+
+### Baterías de verificación por integrante
+
+Cada integrante firma una batería que audita exclusivamente su módulo. Todas se
+ejecutan sin conexión a internet salvo donde se indique lo contrario:
+
+```bash
+python3 tests/test_integrante_1.py   # exceptions.py y sanitizer.py
+python3 tests/test_integrante_2.py   # core.py — concurrencia y telemetría
+python3 tests/test_integrante_3.py   # AsyncJSONFormatter
+python3 tests/test_integrante_4.py   # pipeline de cola no bloqueante
+python3 tests/test_integrante_5.py   # CLI, integración y auditoría AST
+```
+
+La batería del integrante 5 incluye una **auditoría mecánica por AST**: recorre
+el árbol de sintaxis de todos los módulos de `src/` y demuestra que ninguna
+prohibición de la cátedra fue violada, sin depender de la lectura humana del
+código.
 
 ### Suite de caos y auditoría forense
 

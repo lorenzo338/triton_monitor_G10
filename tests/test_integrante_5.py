@@ -260,7 +260,7 @@ def probar_hard_gates() -> None:
 
 def probar_captura_quirurgica() -> None:
     """Verifica que los tres bloques except* estén declarados e independientes."""
-    seccion("5.7  CAPTURA QUIRÚRGICA: TRES BLOQUES except* INDEPENDIENTES")
+    seccion("5.7  CAPTURA QUIRÚRGICA: BLOQUES except* INDEPENDIENTES")
 
     fuente = (RAIZ / "src" / "app_operator.py").read_text(encoding="utf-8")
     arbol = ast.parse(fuente)
@@ -275,10 +275,18 @@ def probar_captura_quirurgica() -> None:
                 if isinstance(manejador.type, ast.Name):
                     familias.append(manejador.type.id)
 
-    check(f"familias capturadas: {familias}", len(familias) == 3)
+    check(f"familias capturadas: {familias}", len(familias) >= 3)
     for esperada in ("ProviderTimeoutError", "CorruptedPayloadError",
                      "NetworkPeeringError"):
         check(f"bloque 'except* {esperada}' declarado", esperada in familias)
+
+    # La red de seguridad captura la raíz de la jerarquía, así que debe ir
+    # última: declarada antes, absorbería los subgrupos de las tres familias
+    # quirúrgicas y ninguno de sus bloques llegaría a ejecutarse.
+    check("la red de seguridad 'except* TritonError' cierra la cadena",
+          familias[-1:] == ["TritonError"])
+    check("ninguna familia quirúrgica se declara después de la red de seguridad",
+          "TritonError" not in familias[:-1])
     check("el try principal cierra con un bloque finally de limpieza", tiene_finally)
 
 

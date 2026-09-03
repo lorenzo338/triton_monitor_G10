@@ -11,7 +11,8 @@ Este script es el orquestador principal del sistema. Su ciclo de vida es:
    ``dictConfig`` y arrancar el pipeline no bloqueante del Integrante 4.
 3. Lanzar el barrido asíncrono del Integrante 2 dentro de ``asyncio.run``.
 4. Diseccionar los fallos concurrentes con bloques ``except*`` quirúrgicos e
-   independientes.
+   independientes, cerrados por una red de seguridad ``except* TritonError``
+   que impide que un incidente de dominio nuevo escape como traceback crudo.
 5. Liberar los recursos en un bloque ``finally`` que respeta estrictamente la
    norma **PEP 765**.
 
@@ -28,11 +29,13 @@ import logging
 import sys
 from typing import Any
 
+from triton_telemetry import __version__
 from triton_telemetry.core import PROVEEDORES_SOPORTADOS, escanear_proveedores
 from triton_telemetry.exceptions import (
     CorruptedPayloadError,
     NetworkPeeringError,
     ProviderTimeoutError,
+    TritonError,
 )
 from triton_telemetry.logging_engine import (
     ARCHIVO_LOG_POR_DEFECTO,
@@ -45,7 +48,7 @@ from triton_telemetry.sanitizer import (
     validar_timeout,
 )
 
-__all__ = ["construir_parser", "main"]
+__all__ = ["DeduplicarProveedores", "construir_parser", "main"]
 
 #: Traducción de los modos operativos de dominio a severidades de consola.
 NIVELES_POR_MODO: dict[str, str] = {
@@ -58,6 +61,39 @@ NIVELES_POR_MODO: dict[str, str] = {
 SALIDA_OK = 0
 SALIDA_INCIDENTE = 1
 SALIDA_INTERRUPCION = 130
+
+
+class DeduplicarProveedores(argparse.Action):
+    """Colapsa los proveedores repetidos conservando el orden de invocación.
+
+    ``argparse`` valida ``choices`` antes de delegar en la acción, de modo que
+    aquí solo llegan proveedores soportados. La deduplicación pertenece a la
+    frontera de la CLI y no al núcleo asíncrono: ``core.escanear_proveedores``
+    nombra cada corrutina como ``telemetria-<proveedor>``, así que un duplicado
+    dispararía dos peticiones HTTP reales al mismo endpoint y produciría dos
+    registros con el mismo ``tarea_asyncio``, arruinando la trazabilidad del
+    volcado forense.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        """Deposita en el espacio de nombres la lista ya deduplicada.
+
+        Args:
+            parser: Parser que invoca la acción.
+            namespace: Espacio de nombres en construcción.
+            values: Proveedores crudos, ya validados contra ``choices``.
+            option_string: Bandera que originó la acción; ``None`` en los
+                argumentos posicionales.
+        """
+        # dict.fromkeys es el idioma canónico para deduplicar preservando el
+        # orden de aparición: los dict conservan el orden de inserción.
+        setattr(namespace, self.dest, list(dict.fromkeys(values)))
 
 
 def construir_parser() -> argparse.ArgumentParser:
@@ -88,7 +124,14 @@ def construir_parser() -> argparse.ArgumentParser:
         "proveedores",
         nargs="+",
         choices=PROVEEDORES_SOPORTADOS,
-        help="Proveedores cloud a interrogar.",
+        action=DeduplicarProveedores,
+        help="Proveedores cloud a interrogar. Los repetidos se colapsan.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"TritonMonitor {__version__}",
+        help="Muestra la versión del paquete triton_telemetry y termina.",
     )
     parser.add_argument(
         "-c",
@@ -163,13 +206,24 @@ def _resolver_nivel_consola(argumentos: argparse.Namespace) -> str:
     return NIVELES_POR_MODO[argumentos.modo]
 
 
-def _imprimir_reporte(resultados: list[dict[str, Any]], cluster: str | None) -> None:
+def _imprimir_reporte(
+    resultados: list[dict[str, Any]],
+    cluster: str | None,
+    *,
+    silencioso: bool = False,
+) -> None:
     """Vuelca por salida estándar el reporte nominal de los nodos operativos.
 
     Args:
         resultados: Reportes de los nodos que respondieron correctamente.
         cluster: Identificador de clúster sanitizado, si se proporcionó.
+        silencioso: Si es ``True`` se omite toda la salida de texto. El volcado
+            JSON en disco no se ve afectado: viaja por el pipeline de logging,
+            que es un canal independiente de estos ``print``.
     """
+    if silencioso:
+        return
+
     print("\n" + "=" * 72)
     print(f"  REPORTE DE TELEMETRÍA MULTICLOUD - Clúster: {cluster or 'no declarado'}")
     print("=" * 72)
@@ -190,13 +244,24 @@ def _imprimir_reporte(resultados: list[dict[str, Any]], cluster: str | None) -> 
     print("=" * 72 + "\n")
 
 
-def _reportar_notas_forenses(titulo: str, grupo: BaseExceptionGroup) -> None:
+def _reportar_notas_forenses(
+    titulo: str,
+    grupo: BaseExceptionGroup,
+    *,
+    silencioso: bool = False,
+) -> None:
     """Imprime en consola las notas forenses de un grupo de excepciones.
 
     Args:
         titulo: Encabezado del bloque de incidentes.
         grupo: Grupo de excepciones capturado por un bloque ``except*``.
+        silencioso: Si es ``True`` se omite la salida por ``stderr``. El
+            incidente ya quedó registrado en el volcado estructurado antes de
+            llegar aquí, así que no se pierde evidencia forense.
     """
+    if silencioso:
+        return
+
     print(f"\n[!] {titulo} ({len(grupo.exceptions)} incidente/s)", file=sys.stderr)
 
     for indice, incidente in enumerate(grupo.exceptions, start=1):
@@ -235,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
 
     resultados: list[dict[str, Any]] = []
     codigo_salida = SALIDA_OK
+    silencioso = argumentos.silencioso
 
     try:
         asyncio.run(
@@ -263,7 +329,9 @@ def main(argv: list[str] | None = None) -> int:
             extra={"familia_incidente": "timeout",
                    "afectados": len(grupo.exceptions)},
         )
-        _reportar_notas_forenses("TIMEOUT DE PROVEEDOR", grupo)
+        _reportar_notas_forenses(
+            "TIMEOUT DE PROVEEDOR", grupo, silencioso=silencioso
+        )
 
     except* CorruptedPayloadError as grupo:
         # Degradación lógica: un payload corrupto o un estatus HTTP inesperado
@@ -274,7 +342,9 @@ def main(argv: list[str] | None = None) -> int:
             extra={"familia_incidente": "payload",
                    "afectados": len(grupo.exceptions)},
         )
-        _reportar_notas_forenses("PAYLOAD CORRUPTO / ESTATUS HTTP", grupo)
+        _reportar_notas_forenses(
+            "PAYLOAD CORRUPTO / ESTATUS HTTP", grupo, silencioso=silencioso
+        )
 
     except* NetworkPeeringError as grupo:
         codigo_salida = SALIDA_INCIDENTE
@@ -284,13 +354,33 @@ def main(argv: list[str] | None = None) -> int:
             extra={"familia_incidente": "peering",
                    "afectados": len(grupo.exceptions)},
         )
-        _reportar_notas_forenses("FALLO DE PEERING / DNS", grupo)
+        _reportar_notas_forenses(
+            "FALLO DE PEERING / DNS", grupo, silencioso=silencioso
+        )
+
+    except* TritonError as grupo:
+        # Red de seguridad de la integración. Los tres bloques anteriores ya
+        # consumieron sus familias, así que aquí solo aterriza un incidente de
+        # dominio nuevo que todavía no tiene tratamiento quirúrgico propio. Sin
+        # este bloque el subgrupo sobrante se relanzaría al salir del finally y
+        # el operador recibiría un traceback crudo, además de perder el código
+        # de retorno semántico que acumula esta función.
+        codigo_salida = SALIDA_INCIDENTE
+        logger.error(
+            "Incidente de dominio sin tratamiento quirúrgico específico",
+            exc_info=grupo,
+            extra={"familia_incidente": "no_clasificado",
+                   "afectados": len(grupo.exceptions)},
+        )
+        _reportar_notas_forenses(
+            "INCIDENTE DE DOMINIO NO CLASIFICADO", grupo, silencioso=silencioso
+        )
 
     finally:
         # PEP 765: este bloque no contiene return, break ni continue. Inyectar
         # cualquiera de ellos silenciaría ciegamente una excepción activa y
         # dispararía el SyntaxWarning de Python 3.14.
-        _imprimir_reporte(resultados, argumentos.cluster)
+        _imprimir_reporte(resultados, argumentos.cluster, silencioso=silencioso)
         logger.info(
             "Apagando el pipeline de observabilidad",
             extra={"nodos_operativos": len(resultados),
